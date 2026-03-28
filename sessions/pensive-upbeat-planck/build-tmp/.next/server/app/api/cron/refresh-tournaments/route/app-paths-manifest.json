@@ -1,0 +1,3 @@
+{
+  "/api/cron/refresh-tournaments/route": "app/api/cron/refresh-tournaments/route.js"
+}
