@@ -1,15 +1,15 @@
 /**
  * GET /api/tournaments?circuit=ATP|WTA
  *
- * Returns the two tracked tournaments for the given circuit:
- * current (in_progress or most recent) and next (upcoming).
- * All data is served from Vercel KV cache — live API only called on TTL expiry.
+ * Returns current and next tournament for the given circuit.
+ * Uses mock data when RAPIDAPI_KEY is not set (demo / initial deploy).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import type { Circuit, Tournament } from "@/types";
 import { fetchTournaments } from "@/lib/api/tennis";
 import { cacheGetOrFetch, CacheKeys, TTL } from "@/lib/cache/kv";
+import { getMockTournaments, isMockMode } from "@/lib/api/mock";
 
 export async function GET(request: NextRequest) {
   const circuit = (request.nextUrl.searchParams.get("circuit") ?? "ATP") as Circuit;
@@ -19,6 +19,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Mock mode — no API key configured
+    if (isMockMode()) {
+      const { current, next } = getMockTournaments(circuit);
+      return NextResponse.json({ circuit, current, next, mock: true, fetchedAt: new Date().toISOString() });
+    }
+
     const tournaments = await cacheGetOrFetch<Tournament[]>(
       CacheKeys.tournaments(circuit),
       () => fetchTournaments(circuit),
@@ -28,9 +34,6 @@ export async function GET(request: NextRequest) {
     if (!tournaments) {
       return NextResponse.json({ error: "Failed to load tournaments" }, { status: 503 });
     }
-
-    // Return current + next tournament (2 tournaments per circuit)
-    const now = new Date();
 
     const inProgress = tournaments
       .filter((t) => t.status === "in_progress")
@@ -45,12 +48,7 @@ export async function GET(request: NextRequest) {
       ? (inProgress.length > 0 ? upcoming[0] : upcoming[1]) ?? null
       : upcoming[1] ?? null;
 
-    return NextResponse.json({
-      circuit,
-      current,
-      next,
-      fetchedAt: new Date().toISOString(),
-    });
+    return NextResponse.json({ circuit, current, next, fetchedAt: new Date().toISOString() });
   } catch (err) {
     console.error("[/api/tournaments]", err);
     return NextResponse.json({ error: "Internal error" }, { status: 500 });

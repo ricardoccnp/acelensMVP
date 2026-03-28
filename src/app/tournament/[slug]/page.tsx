@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
-import type { Tournament, Match } from "@/types";
+import type { Tournament } from "@/types";
 import { SurfaceBadge } from "@/components/ui/SurfaceBadge";
-import { TournamentTabs } from "@/components/tournament/TournamentTabs";
+import { TournamentClient } from "@/components/tournament/TournamentClient";
+import { getMockTournaments, isMockMode } from "@/lib/api/mock";
 import { cacheGet, CacheKeys } from "@/lib/cache/kv";
 import { formatDate } from "@/lib/utils";
 
@@ -10,28 +11,24 @@ interface PageProps {
 }
 
 async function getTournamentBySlug(slug: string): Promise<Tournament | null> {
-  // Check ATP then WTA tournaments cache
+  // Mock mode: check both circuits
+  if (isMockMode()) {
+    for (const circuit of ["ATP", "WTA"] as const) {
+      const { current, next } = getMockTournaments(circuit);
+      if (current.slug === slug) return current;
+      if (next.slug === slug) return next;
+    }
+    return null;
+  }
+
+  // KV mode
   for (const circuit of ["ATP", "WTA"] as const) {
-    const tournaments = await cacheGet<Tournament[]>(
-      CacheKeys.tournaments(circuit)
-    );
+    const tournaments = await cacheGet<Tournament[]>(CacheKeys.tournaments(circuit));
     if (!tournaments) continue;
     const found = tournaments.find((t) => t.slug === slug);
     if (found) return found;
   }
   return null;
-}
-
-async function getTournamentSchedule(tournamentId: string): Promise<Match[]> {
-  return (
-    (await cacheGet<Match[]>(CacheKeys.tournamentSchedule(tournamentId))) ?? []
-  );
-}
-
-async function getTournamentDraw(tournamentId: string): Promise<Match[]> {
-  return (
-    (await cacheGet<Match[]>(CacheKeys.tournamentDraw(tournamentId))) ?? []
-  );
 }
 
 const statusStyles = {
@@ -50,14 +47,7 @@ export default async function TournamentPage({ params }: PageProps) {
   const { slug } = await params;
 
   const tournament = await getTournamentBySlug(slug);
-  if (!tournament) {
-    notFound();
-  }
-
-  const [schedule, draw] = await Promise.all([
-    getTournamentSchedule(tournament.id),
-    getTournamentDraw(tournament.id),
-  ]);
+  if (!tournament) notFound();
 
   return (
     <div className="min-h-screen">
@@ -67,32 +57,22 @@ export default async function TournamentPage({ params }: PageProps) {
           <div className="flex items-start gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-2">
-                <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                    statusStyles[tournament.status]
-                  }`}
-                >
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusStyles[tournament.status]}`}>
                   {statusLabels[tournament.status]}
                 </span>
                 <span className="text-xs text-gray-400">{tournament.circuit}</span>
               </div>
-
               <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
                 {tournament.name}
               </h1>
-
               <p className="text-gray-500 mt-1 text-sm">
-                {tournament.location} · {formatDate(tournament.startDate)} –{" "}
-                {formatDate(tournament.endDate)}
+                {tournament.location} · {formatDate(tournament.startDate)} – {formatDate(tournament.endDate)}
               </p>
-
               <div className="flex items-center gap-3 mt-3">
                 <SurfaceBadge surface={tournament.surface} />
                 <span className="text-xs text-gray-400">{tournament.category}</span>
                 {tournament.prizeMoney && (
-                  <span className="text-xs font-semibold text-gray-600">
-                    {tournament.prizeMoney}
-                  </span>
+                  <span className="text-xs font-semibold text-gray-600">{tournament.prizeMoney}</span>
                 )}
               </div>
             </div>
@@ -100,13 +80,9 @@ export default async function TournamentPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* Tabs (schedule, draw, predictions) */}
+      {/* Tabs — client component fetches schedule/draw via API */}
       <div className="max-w-6xl mx-auto">
-        <TournamentTabs
-          tournament={tournament}
-          schedule={schedule}
-          draw={draw}
-        />
+        <TournamentClient tournamentId={tournament.id} tournament={tournament} />
       </div>
     </div>
   );

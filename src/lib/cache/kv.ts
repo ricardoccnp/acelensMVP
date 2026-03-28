@@ -8,7 +8,22 @@
  * Falls back to stale cache value if the live API is unavailable.
  */
 
-import { kv } from "@vercel/kv";
+// ─── In-memory fallback (used when KV env vars are not set) ──────────────────
+// This lets the app run fully without a Redis connection during local dev
+// or the first Vercel deploy before KV is provisioned.
+
+const memStore = new Map<string, { value: unknown; expiresAt: number | null }>();
+
+function isKvConfigured(): boolean {
+  return !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+}
+
+// Lazy-load Vercel KV only when configured
+async function getKv() {
+  if (!isKvConfigured()) return null;
+  const { kv } = await import("@vercel/kv");
+  return kv;
+}
 
 // ─── TTL constants (seconds) ─────────────────────────────────────────────────
 
@@ -45,62 +60,75 @@ export const CacheKeys = {
     `h2h:${[p1Id, p2Id].sort().join(":")}`,
 };
 
-// ─── Generic get with fallback ────────────────────────────────────────────────
+// ─── Generic cache operations (KV when available, in-memory otherwise) ────────
 
 /**
  * Get a cached value. Returns null if not found.
  */
 export async function cacheGet<T>(key: string): Promise<T | null> {
-  try {
-    return await kv.get<T>(key);
-  } catch {
-    console.error(`[KV] get failed for key: ${key}`);
+  const kv = await getKv();
+  if (kv) {
+    try { return await kv.get<T>(key); } catch { return null; }
+  }
+  // In-memory fallback
+  const entry = memStore.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt !== null && Date.now() > entry.expiresAt) {
+    memStore.delete(key);
     return null;
   }
+  return entry.value as T;
 }
 
 /**
  * Set a cached value with optional TTL (seconds).
- * Pass null TTL for permanent storage (updated explicitly).
  */
 export async function cacheSet<T>(
   key: string,
   value: T,
   ttlSeconds: number | null = null
 ): Promise<void> {
-  try {
-    if (ttlSeconds !== null) {
-      await kv.set(key, value, { ex: ttlSeconds });
-    } else {
-      await kv.set(key, value);
-    }
-  } catch {
-    console.error(`[KV] set failed for key: ${key}`);
+  const kv = await getKv();
+  if (kv) {
+    try {
+      ttlSeconds !== null
+        ? await kv.set(key, value, { ex: ttlSeconds })
+        : await kv.set(key, value);
+    } catch { /* silent */ }
+    return;
   }
+  // In-memory fallback
+  memStore.set(key, {
+    value,
+    expiresAt: ttlSeconds !== null ? Date.now() + ttlSeconds * 1000 : null,
+  });
 }
 
 /**
  * Delete a cached value.
  */
 export async function cacheDel(key: string): Promise<void> {
-  try {
-    await kv.del(key);
-  } catch {
-    console.error(`[KV] del failed for key: ${key}`);
-  }
+  const kv = await getKv();
+  if (kv) { try { await kv.del(key); } catch { /* silent */ } return; }
+  memStore.delete(key);
 }
 
 /**
- * Delete all keys matching a pattern (uses KEYS — use sparingly).
+ * Delete all keys matching a pattern.
  */
 export async function cacheDelPattern(pattern: string): Promise<void> {
-  try {
-    const keys = await kv.keys(pattern);
-    if (keys.length > 0) {
-      await Promise.all(keys.map((k) => kv.del(k)));
-    }
-  } catch {
-    console.error(`[KV] delPattern failed for pattern: ${pattern}`);
+  const kv = await getKv();
+  if (kv) {
+    try {
+      const keys = await kv.keys(pattern);
+      if (keys.length > 0) await Promise.all(keys.map((k) => kv.del(k)));
+    } catch { /* silent */ }
+    return;
+  }
+  // In-memory: simple prefix/glob match
+  const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+  for (const key of memStore.keys()) {
+    if (regex.test(key)) memStore.delete(key);
   }
 }
 
