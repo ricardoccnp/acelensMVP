@@ -140,8 +140,8 @@ export async function getOrGeneratePreview(
   const cached = await cacheGet<MatchPreview>(key);
   if (cached) return cached;
 
-  // Guard: only generate for upcoming matches
-  if (detail.status !== "upcoming") return null;
+  // Guard: only skip completed matches (previews are useful for upcoming and in-progress)
+  if (detail.status === "completed") return null;
   if (!detail.prediction) return null;
 
   try {

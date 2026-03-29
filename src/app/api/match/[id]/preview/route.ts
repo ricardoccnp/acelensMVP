@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cacheGet, CacheKeys } from "@/lib/cache/kv";
 import { getOrGeneratePreview } from "@/lib/ai/preview";
+import { getMockMatchDetail, isMockMode } from "@/lib/api/mock";
 import type { MatchDetail, MatchPreview } from "@/types";
 
 export async function GET(
@@ -25,9 +26,13 @@ export async function GET(
       return NextResponse.json(cached);
     }
 
-    // Need to build MatchDetail to generate a preview
-    // Fetch the match + prediction + stats from KV (should be pre-populated)
-    const matchDetail = await cacheGet<MatchDetail>(CacheKeys.match(id));
+    // Fetch match detail — from mock data or KV depending on mode
+    let matchDetail: MatchDetail | null;
+    if (isMockMode()) {
+      matchDetail = getMockMatchDetail(id);
+    } else {
+      matchDetail = await cacheGet<MatchDetail>(CacheKeys.match(id));
+    }
 
     if (!matchDetail) {
       return NextResponse.json(
