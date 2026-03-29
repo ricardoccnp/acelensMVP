@@ -2,23 +2,11 @@
   "crons": [
     {
       "path": "/api/cron/refresh-tournaments",
-      "schedule": "0 */6 * * *"
-    },
-    {
-      "path": "/api/cron/refresh-schedule",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/refresh-odds",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/cron/refresh-previews",
       "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/cron/update-fatigue",
-      "schedule": "0 * * * *"
     }
   ]
 }
